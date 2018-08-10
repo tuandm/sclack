@@ -19,6 +19,7 @@ from sclack.components import Reaction, SideBar, TextDivider
 from sclack.components import User, Workspaces
 from sclack.image import Image
 from sclack.loading import LoadingChatBox, LoadingSideBar
+from sclack.quick_switcher import QuickSwitcher
 from sclack.store import Store
 from sclack.themes import themes
 
@@ -32,7 +33,6 @@ class SclackEventLoop(urwid.AsyncioEventLoop):
         self._loop.set_exception_handler(self._custom_exception_handler)
         self._loop.run_forever()
 
-
     def set_exception_handler(self, handler):
         self._custom_exception_handler = handler
 
@@ -41,7 +41,9 @@ class App:
 
     def _exception_handler(self, loop, context):
         try:
-            exception = context['exception']
+            exception = context.get('exception')
+            if not exception:
+                raise Exception
             message = 'Whoops, something went wrong:\n\n' + str(exception) + '\n' + ''.join(traceback.format_tb(exception.__traceback__))
             self.chatbox = LoadingChatBox(message)
         except Exception as exc:
@@ -69,8 +71,10 @@ class App:
             ('fixed', config['sidebar']['width'], urwid.AttrWrap(sidebar, 'sidebar')),
             urwid.AttrWrap(chatbox, 'chatbox')
         ])
+        self._body = urwid.Frame(self.columns, header=self.workspaces_line)
+        self.quick_switcher = None
         self.urwid_loop = urwid.MainLoop(
-            urwid.Frame(self.columns, header=self.workspaces_line),
+            self._body,
             palette=palette,
             event_loop=custom_loop,
             unhandled_input=self.unhandled_input
@@ -140,7 +144,9 @@ class App:
             for channel in self.store.state.channels
         ]
         dms = []
-        dm_users = self.store.state.dms[:15]
+        max_users_sidebar = self.store.config['sidebar']['max_users']
+        dm_users = self.store.state.dms[:max_users_sidebar]
+
         for dm in dm_users:
             user = self.store.find_user_by_id(dm['user'])
             if user:
@@ -150,6 +156,7 @@ class App:
                     user=dm['user'],
                     you=user['id'] == self.store.state.auth['user_id']
                 ))
+
         self.sidebar = SideBar(profile, channels, dms, title=self.store.state.auth['team'])
         urwid.connect_signal(self.sidebar, 'go_to_channel', self.go_to_channel)
         loop.create_task(self.get_channels_info(executor, channels))
@@ -198,7 +205,10 @@ class App:
             is_read_only=self.store.state.channel.get('is_read_only', False)
         )
         self.chatbox = ChatBox(messages, header, self.message_box)
+        urwid.connect_signal(self.chatbox, 'set_insert_mode', self.set_insert_mode)
+        urwid.connect_signal(self.chatbox, 'open_quick_switcher', self.open_quick_switcher)
         urwid.connect_signal(self.message_box.prompt_widget, 'submit_message', self.submit_message)
+        urwid.connect_signal(self.message_box.prompt_widget, 'go_to_last_message', self.go_to_last_message)
         self.real_time_task = loop.create_task(self.start_real_time())
 
     def edit_message(self, widget, user_id, ts, original_text):
@@ -431,6 +441,10 @@ class App:
                 self.go_to_chatbox()
 
     def go_to_channel(self, channel_id):
+        if self.quick_switcher:
+            urwid.disconnect_signal(self.quick_switcher, 'go_to_channel', self.go_to_channel)
+            self.urwid_loop.widget = self._body
+            self.quick_switcher = None
         loop.create_task(self._go_to_channel(channel_id))
 
     @asyncio.coroutine
@@ -550,6 +564,10 @@ class App:
         self.columns.focus_position = 0
         if self.store.state.editing_widget:
             self.leave_edit_mode()
+        if self.quick_switcher:
+            urwid.disconnect_signal(self.quick_switcher, 'go_to_channel', self.go_to_channel)
+            self.urwid_loop.widget = self._body
+            self.quick_switcher = None
 
     def submit_message(self, message):
         if self.store.state.editing_widget:
@@ -566,6 +584,10 @@ class App:
                 self.store.post_message(channel, message)
                 self.leave_edit_mode()
 
+    def go_to_last_message(self):
+        self.go_to_chatbox()
+        self.chatbox.body.go_to_last_message()
+
     def unhandled_input(self, key):
         keymap = self.store.config['keymap']
 
@@ -579,10 +601,18 @@ class App:
             return self.set_edit_topic_mode()
         elif key == keymap['set_insert_mode'] and self.message_box:
             return self.set_insert_mode()
+        elif key == keymap['open_quick_switcher']:
+            return self.open_quick_switcher()
         elif key in ('1', '2', '3', '4', '5', '6', '7', '8', '9') and len(self.workspaces) >= int(key):
             if self.workspaces_line is not None:
                 self.workspaces_line.select(int(key))
                 return self.switch_to_workspace(int(key))
+
+    def open_quick_switcher(self):
+        if not self.quick_switcher:
+            self.quick_switcher = QuickSwitcher(self.urwid_loop.widget, self.urwid_loop)
+            urwid.connect_signal(self.quick_switcher, 'go_to_channel', self.go_to_channel)
+            self.urwid_loop.widget = self.quick_switcher
 
     def configure_screen(self, screen):
         screen.set_terminal_properties(colors=self.store.config['colors'])

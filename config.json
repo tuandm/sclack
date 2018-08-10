@@ -11,18 +11,21 @@
         "go_to_chatbox": "c",
         "go_to_profile": "p",
         "go_to_sidebar": "esc",
+        "open_quick_switcher": "ctrl k",
         "quit_application": "q",
         "set_edit_topic_mode": "t",
         "set_insert_mode": "i",
         "yank_message": "y"
     },
     "sidebar": {
-        "width": 25
+        "width": 25,
+        "max_users": 20
     },
     "features": {
         "emoji": true,
         "markdown": true,
-        "pictures": true
+        "pictures": true,
+        "browser": ""
     },
     "icons": {
         "block": "\u258C",
