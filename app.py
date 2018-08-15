@@ -523,7 +523,8 @@ class App:
 
     @asyncio.coroutine
     def start_real_time(self):
-        self.store.slack.rtm_connect()
+        self.store.slack.rtm_connect(auto_reconnect=True)
+
         def stop_typing(*args):
             self.chatbox.message_box.typing = None
         alarm = None
@@ -644,6 +645,8 @@ class App:
         elif key in ('1', '2', '3', '4', '5', '6', '7', '8', '9') and len(self.workspaces) >= int(key):
             if self.workspaces_line is not None:
                 self.workspaces_line.select(int(key))
+                # Stop rtm to switch workspace
+                self.real_time_task.cancel()
                 return self.switch_to_workspace(int(key))
 
     def open_quick_switcher(self):
@@ -663,6 +666,7 @@ class App:
         if hasattr(self, 'real_time_task'):
             self.real_time_task.cancel()
         sys.exit()
+
 
 def ask_for_token(json_config):
     if os.path.isfile(os.path.expanduser('~/.sclack')):
